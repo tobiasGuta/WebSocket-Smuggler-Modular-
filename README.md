@@ -83,10 +83,6 @@ The extension determines a successful smuggle by observing **two distinct HTTP r
 
 ---
 
-## Code Structure & Contributors
-The core logic is executed in the `performAttack` method, which utilizes the `java.net.Socket` class to bypass standard HTTP libraries and perform the atomic write operation necessary for the attack.
----
-
 <div align="center">
   <h3>☕ Support My Journey</h3>
 </div>
