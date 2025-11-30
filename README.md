@@ -52,6 +52,8 @@ This mode tests for **naive proxies** (like Varnish) that fail to check the back
 | **WS Version** | `777` | An invalid version number designed to provoke a `426 Upgrade Required` response from the backend. |
 | **Smuggled Path** | `/flag` | The internal resource you are trying to access. |
 
+> some proxies will not even require the existence of a WebSocket endpoint for this technique to work
+
 https://github.com/user-attachments/assets/8b7b1f10-ec1a-49ca-9bc1-fb3f994d570e
 
 ### Mode 2: SSRF-Triggered Smuggling
