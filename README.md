@@ -1,4 +1,5 @@
 # WebSocket Smuggler (Modular)
+![Java](https://img.shields.io/badge/Java-ED8B00?style=for-the-badge&logo=java&logoColor=white) ![Burp Suite](https://img.shields.io/badge/Burp_Suite-FF6633?style=for-the-badge&logo=burpsuite&logoColor=white) ![Security](https://img.shields.io/badge/Cybersecurity-Bug_Bounty-red?style=for-the-badge)
 
 ## Overview
 The **WebSocket Smuggler (Modular)** is a specialized Burp Suite extension designed to automate the detection and exploitation of **HTTP Request Smuggling** vulnerabilities that arise from faulty WebSocket connection handling by reverse proxies.
