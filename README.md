@@ -10,6 +10,8 @@ This tool is essential for testing modern applications where simple header manip
 
 ## Key Features
 * **Dual Attack Mode:** Supports two distinct types of blind smuggling attacks (Simple Desync vs. SSRF Trigger).
+* **Wordlist Fuzzing Engine:** Load custom wordlists to brute-force internal endpoints or parameters within the smuggled request.
+* **Attack Controls:** Pause, resume, and stop attacks on demand, giving you full control over traffic generation.
 * **Native Burp UI:** Integrates seamlessly with Burp Suite, using the native **Request/Response editors** for professional traffic analysis.
 * **Raw Socket Engine:** Bypasses Burp's high-level HTTP stack to ensure the smuggled payload is sent immediately and atomically, improving exploitation reliability.
 * **Auto-Sync Feedback:** Automatically updates the viewer instantly when a test finishes, improving workflow.
@@ -76,6 +78,30 @@ The external server used in this mode **cannot** be Burp Collaborator or Interac
 You must use a server capable of sending this raw response, typically by running your custom Python script exposed via:
 1.  **A Public VPS (e.g., AWS, DigitalOcean).**
 2.  **A Tunneling Service (e.g., Ngrok or Cloudflare Tunnel).**
+
+---
+
+## Advanced Usage: Wordlist Fuzzing
+
+You can now perform dictionary-based attacks to discover internal endpoints or fuzz parameters through the smuggled tunnel.
+
+1.  **Load a Wordlist:** Click the `Load Wordlist` button and select a text file containing your payloads.
+2.  **Set the Placeholder:** In the **Smuggled Path** field, use the `{PAYLOAD}` placeholder. The extension will replace this tag with each line from your wordlist.
+    * *Example 1 (Endpoint Fuzzing):* `/{PAYLOAD}`
+    * *Example 2 (Parameter Fuzzing):* `/admin/delete?user={PAYLOAD}`
+3.  **Run Attack:** Click `Run Attack`. The extension will iterate through the list, sending a full smuggling sequence for every item.
+
+> **Note:** Fuzzing works with both Simple Mode and SSRF Mode.
+
+---
+
+## Attack Controls
+
+Long-running fuzzing attacks can be managed using the control panel:
+
+* **Run Attack:** Starts the iteration through the loaded wordlist.
+* **Pause/Resume:** Temporarily halts the attack thread without losing progress. Useful if you need to inspect results or modify network settings.
+* **Stop:** Completely terminates the current attack cycle.
 
 ---
 
