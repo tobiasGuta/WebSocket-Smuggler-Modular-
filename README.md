@@ -9,12 +9,12 @@ This tool is essential for testing modern applications where simple header manip
 ---
 
 ## Key Features
+* **Intelligent Response Parsing:** Automatically distinguishes between harmless HTTP Pipelining (Safe) and valid Request Smuggling chains, eliminating common false positives.
 * **Dual Attack Mode:** Supports two distinct types of blind smuggling attacks (Simple Desync vs. SSRF Trigger).
 * **Wordlist Fuzzing Engine:** Load custom wordlists to brute-force internal endpoints or parameters within the smuggled request.
 * **Attack Controls:** Pause, resume, and stop attacks on demand, giving you full control over traffic generation.
 * **Native Burp UI:** Integrates seamlessly with Burp Suite, using the native **Request/Response editors** for professional traffic analysis.
 * **Raw Socket Engine:** Bypasses Burp's high-level HTTP stack to ensure the smuggled payload is sent immediately and atomically, improving exploitation reliability.
-* **Auto-Sync Feedback:** Automatically updates the viewer instantly when a test finishes, improving workflow.
 
 ---
 
@@ -52,7 +52,7 @@ This mode tests for **naive proxies** (like Varnish) that fail to check the back
 | :--- | :--- | :--- |
 | **[ ] Enable SSRF** | *(Unchecked)* | Uses Simple Mode. |
 | **Simple Bait Path** | `/socket` | The backend WebSocket endpoint (the target of the initial connection). |
-| **WS Version** | `777` | An invalid version number designed to provoke a `426 Upgrade Required` response from the backend. |
+| **WS Version** | `777` or `13` | The version used to initiate the handshake. |
 | **Smuggled Path** | `/flag` | The internal resource you are trying to access. |
 
 > some proxies will not even require the existence of a WebSocket endpoint for this technique to work
@@ -105,8 +105,15 @@ Long-running fuzzing attacks can be managed using the control panel:
 
 ---
 
-## Vulnerability Analysis
-The extension determines a successful smuggle by observing **two distinct HTTP responses** (the first is the Bait/101, and the second is the Smuggled Payload/200) returned over the single raw TCP connection. This confirms the Reverse Proxy has switched to blind tunneling mode.
+## Interpreting Results (Status Logic)
+
+The extension analyzes the raw byte stream to determine if the connection was pipelined or smuggled.
+
+| Status | Meaning | Verdict |
+| :--- | :--- | :--- |
+| **Pipelining (Safe)** | The tool detected **2 distinct HTTP responses** (e.g., `403` then `403`). This means the Frontend Proxy successfully parsed both the Upgrade request and the Smuggled request individually. | **Not Vulnerable** |
+| **Potential Smuggling** | The tool detected **1 HTTP response** (typically `101 Switching Protocols`) and the socket remained open. This indicates the Frontend Proxy opened a tunnel, likely passing the second request to the backend blindly. | **Vulnerable** |
+| **Single Response** | The tool received one response (e.g., `403`) and the socket closed immediately. | **Blocked/Failed** |
 
 ---
 
