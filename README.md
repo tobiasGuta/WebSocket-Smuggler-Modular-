@@ -100,7 +100,7 @@ This mode is used to bypass **smart proxies** (like Nginx) by chaining the attac
 | **Python Server URL** | `http://<YOUR_VPS_IP>:80` | The **external endpoint** running your custom Python script. |
 | **Smuggled Path** | `/flag` | The resource to smuggle the request to. |
 
-https://github.com/user-attachments/assets/e386c160-5f32-4d10-9e36-b0750f0896d5
+https://github.com/user-attachments/assets/46183983-e1f5-401e-98a9-71bc1e7f456e
 
 #### Attacker Server Setup (Real-World)
 The external server used in this mode **cannot** be Burp Collaborator or Interactsh. These tools return a static `200 OK` response, but this attack requires the proxy to see a raw `101 Switching Protocols` status code to open the tunnel.
