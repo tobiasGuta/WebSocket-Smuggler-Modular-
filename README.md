@@ -9,12 +9,32 @@ This tool is essential for testing modern applications where simple header manip
 ---
 
 ## Key Features
-* **Intelligent Response Parsing:** Automatically distinguishes between harmless HTTP Pipelining (Safe) and valid Request Smuggling chains, eliminating common false positives.
+* **Intelligent Response Parsing:** Automatically distinguishes between harmless HTTP Pipelining (Safe), potential smuggling, and confirmed smuggling (with `Upgrade` header detection), eliminating common false positives.
 * **Dual Attack Mode:** Supports two distinct types of blind smuggling attacks (Simple Desync vs. SSRF Trigger).
 * **Wordlist Fuzzing Engine:** Load custom wordlists to brute-force internal endpoints or parameters within the smuggled request.
+* **Multi-Threaded Attacks:** Configure the number of concurrent threads (1–50) to speed up large wordlist scans.
 * **Attack Controls:** Pause, resume, and stop attacks on demand, giving you full control over traffic generation.
-* **Native Burp UI:** Integrates seamlessly with Burp Suite, using the native **Request/Response editors** for professional traffic analysis.
+* **Configurable Timing:** Adjust socket timeout and inter-request delay to tune speed vs. stealth for different targets.
+* **Native Burp UI:** Integrates seamlessly with Burp Suite, using the native **Request/Response editors** for professional traffic analysis. Results table is color-coded by status for instant visual triage.
 * **Raw Socket Engine:** Bypasses Burp's high-level HTTP stack to ensure the smuggled payload is sent immediately and atomically, improving exploitation reliability.
+* **CSV Export:** Export the full results table to CSV for reporting and further analysis.
+* **Persistent Configuration:** All settings are saved across Burp restarts — no need to reconfigure every session.
+* **Input Validation:** All fields are validated before attacks launch, with clear error messages.
+
+---
+
+## Architecture
+
+The extension follows a modular architecture with clean separation of concerns:
+
+| File | Responsibility |
+| :--- | :--- |
+| `WebSocketSmuggler.java` | Entry point — registers extension, tab, context menu, unload handler |
+| `SmugglerUI.java` | All Swing UI, event handling, persistence, CSV export, color-coded table |
+| `AttackEngine.java` | Raw socket logic, thread pool management, pause/resume/stop |
+| `AttackConfig.java` | Immutable configuration holder with input validation |
+| `AttackLog.java` | Data class for storing attack history entries |
+| `ResponseAnalyzer.java` | Enhanced response parsing — detects Upgrade headers, tracks response length |
 
 ---
 
@@ -40,6 +60,16 @@ This tool is essential for testing modern applications where simple header manip
 
 ---
 
+## Quick Start
+
+1.  Browse the target application through Burp Suite's Proxy.
+2.  In **Proxy → HTTP History**, right-click any request to the target and select **"Send to WebSocket Smuggler"**.
+3.  The extension tab will activate with the target set. Configure your attack settings and click **Run Attack**.
+
+> You can run a single probe immediately (no wordlist needed), or load a wordlist for dictionary-based fuzzing.
+
+---
+
 ## Usage Guide (Attack Modes)
 
 The tool operates in two modes, controlled by the **"Enable SSRF-Triggered Smuggling"** checkbox on the extension tab.
@@ -55,7 +85,7 @@ This mode tests for **naive proxies** (like Varnish) that fail to check the back
 | **WS Version** | `777` or `13` | The version used to initiate the handshake. |
 | **Smuggled Path** | `/flag` | The internal resource you are trying to access. |
 
-> some proxies will not even require the existence of a WebSocket endpoint for this technique to work
+> Some proxies will not even require the existence of a WebSocket endpoint for this technique to work.
 
 https://github.com/user-attachments/assets/8b7b1f10-ec1a-49ca-9bc1-fb3f994d570e
 
@@ -83,7 +113,7 @@ You must use a server capable of sending this raw response, typically by running
 
 ## Advanced Usage: Wordlist Fuzzing
 
-You can now perform dictionary-based attacks to discover internal endpoints or fuzz parameters through the smuggled tunnel.
+You can perform dictionary-based attacks to discover internal endpoints or fuzz parameters through the smuggled tunnel.
 
 1.  **Load a Wordlist:** Click the `Load Wordlist` button and select a text file containing your payloads.
 2.  **Set the Placeholder:** In the **Smuggled Path** field, use the `{PAYLOAD}` placeholder. The extension will replace this tag with each line from your wordlist.
@@ -91,7 +121,17 @@ You can now perform dictionary-based attacks to discover internal endpoints or f
     * *Example 2 (Parameter Fuzzing):* `/admin/delete?user={PAYLOAD}`
 3.  **Run Attack:** Click `Run Attack`. The extension will iterate through the list, sending a full smuggling sequence for every item.
 
-> **Note:** Fuzzing works with both Simple Mode and SSRF Mode.
+> **Note:** Fuzzing works with both Simple Mode and SSRF Mode. You can also run an attack without a wordlist for a quick single-shot probe.
+
+---
+
+## Attack Settings
+
+| Setting | Default | Range | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Socket Timeout (ms)** | `5000` | 100–60000 | How long to wait for the server response. Increase for slow proxies or tunneled SSRF. |
+| **Request Delay (ms)** | `50` | 0–10000 | Delay between requests in wordlist mode. Increase to avoid rate-limiting. |
+| **Threads** | `1` | 1–50 | Number of concurrent attack threads. Increase for faster wordlist scans. |
 
 ---
 
@@ -99,21 +139,29 @@ You can now perform dictionary-based attacks to discover internal endpoints or f
 
 Long-running fuzzing attacks can be managed using the control panel:
 
-* **Run Attack:** Starts the iteration through the loaded wordlist.
+* **Run Attack:** Fires a single probe (no wordlist) or starts wordlist iteration. Requires a target sent via right-click context menu.
 * **Pause/Resume:** Temporarily halts the attack thread without losing progress. Useful if you need to inspect results or modify network settings.
 * **Stop:** Completely terminates the current attack cycle.
+* **Clear Results:** Clears the results table and attack history.
+* **Export CSV:** Exports the full results table to a CSV file for reporting.
+
+A **progress bar** shows real-time completion status during wordlist attacks.
 
 ---
 
 ## Interpreting Results (Status Logic)
 
-The extension analyzes the raw byte stream to determine if the connection was pipelined or smuggled.
+The extension analyzes the raw byte stream and HTTP headers to determine if the connection was pipelined or smuggled. Results are **color-coded** for instant visual triage.
 
-| Status | Meaning | Verdict |
-| :--- | :--- | :--- |
-| **Pipelining (Safe)** | The tool detected **2 distinct HTTP responses** (e.g., `403` then `403`). This means the Frontend Proxy successfully parsed both the Upgrade request and the Smuggled request individually. | **Not Vulnerable** |
-| **Potential Smuggling** | The tool detected **1 HTTP response** (typically `101 Switching Protocols`) and the socket remained open. This indicates the Frontend Proxy opened a tunnel, likely passing the second request to the backend blindly. | **Vulnerable** |
-| **Single Response** | The tool received one response (e.g., `403`) and the socket closed immediately. | **Blocked/Failed** |
+| Status | Color | Meaning | Verdict |
+| :--- | :--- | :--- | :--- |
+| **Smuggling Confirmed (101 + Upgrade)** | 🔴 Red | The tool detected a `101 Switching Protocols` response **with** `Connection: Upgrade` and `Upgrade: websocket` headers. The tunnel was fully opened. | **Vulnerable** |
+| **Potential Smuggling (101)** | 🔴 Red | The tool detected a `101` response but without full Upgrade headers. Likely vulnerable, investigate further. | **Likely Vulnerable** |
+| **Pipelining (Safe)** | 🟢 Green | The tool detected **2 distinct HTTP responses** (e.g., `403` then `403`). The proxy parsed both requests individually. | **Not Vulnerable** |
+| **Single Response** | 🟡 Amber | The tool received one response (e.g., `403`) and the socket closed immediately. | **Blocked/Failed** |
+| **Error** | ⚪ Gray | A connection or network error occurred. | **Check Logs** |
+
+The results table also includes a **Length** column showing the response size in bytes — length anomalies across fuzzing runs can indicate interesting responses.
 
 ---
 
