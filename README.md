@@ -87,7 +87,7 @@ This mode tests for **naive proxies** (like Varnish) that fail to check the back
 
 > Some proxies will not even require the existence of a WebSocket endpoint for this technique to work.
 
-https://github.com/user-attachments/assets/8b7b1f10-ec1a-49ca-9bc1-fb3f994d570e
+https://github.com/user-attachments/assets/e6026827-6896-496b-9030-789b043b923e
 
 ### Mode 2: SSRF-Triggered Smuggling
 
