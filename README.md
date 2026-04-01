@@ -162,7 +162,7 @@ The extension analyzes the raw byte stream and HTTP headers to determine if the 
 | **Single Response** | 🟡 Amber | The tool received one response (e.g., `403`) and the socket closed immediately. | **Blocked/Failed** |
 | **Error** | ⚪ Gray | A connection or network error occurred. | **Check Logs** |
 
-The results table also includes a **Length** column showing the response size in bytes — length anomalies across fuzzing runs can indicate interesting responses.
+The results table also includes a **Length** column showing the response size in bytes length anomalies across fuzzing runs can indicate interesting responses.
 
 ---
 
